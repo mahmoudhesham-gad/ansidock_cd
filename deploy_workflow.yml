@@ -1,0 +1,77 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows: ["your workflow name"]   # must match the `name:` field in the upstream workflow
+    types:
+      - completed
+    branches:
+      - main
+
+env:
+  PLAYBOOKS_DIR: ansible
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: |
+          set -e
+          python3 -m pip install --upgrade pip
+          pip install ansible-core==2.20.*
+
+      - name: Install required Ansible collections
+        run: |
+          ansible-galaxy collection install community.docker
+
+      - name: Deploy via Ansible
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_TARGET_HOST: ${{ secrets.SERVER_HOST }}
+          ANSIBLE_USER: ${{ secrets.SERVER_USER }}
+
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+
+          IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+          IMAGE_TAG: ${{ vars.IMAGE_TAG }}
+          CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}
+          CONTAINER_PORTS: ${{ vars.CONTAINER_PORTS }}
+          CONTAINER_RESTART_POLICY: ${{ vars.CONTAINER_RESTART_POLICY }}
+          CONTAINER_ENV_JSON: ${{ vars.CONTAINER_ENV_JSON }}
+          CONTAINER_NETWORKS_JSON: ${{ vars.CONTAINER_NETWORKS_JSON }}
+          CONTAINER_NETWORK_MODE: ${{ vars.CONTAINER_NETWORK_MODE }}
+
+          # additional environment variables can be added here as needed
+          # RUN_MIGRATIONS: ${{ vars.RUN_MIGRATIONS || 'false' }}
+          # COLLECTSTATIC: ${{ vars.COLLECTSTATIC || 'false' }}
+        run: |
+          set -e
+          echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+          ansible-playbook \
+            -i "${ANSIBLE_TARGET_HOST}," \
+            "$PLAYBOOKS_DIR/ansible_deploy.yml" \
+            -u "${ANSIBLE_USER}" \
+            --private-key /tmp/deploy_key
+
+          # run other post-deployment tasks if needed
+          # if [ "${RUN_MIGRATIONS}" = "true" ] || [ "${COLLECTSTATIC}" = "true" ]; then
+          #   ansible-playbook \
+          #     -i "${ANSIBLE_TARGET_HOST}," \
+          #     "$PLAYBOOKS_DIR/post_deploy.yml" \
+          #     -u "${ANSIBLE_USER}" \
+          #     --private-key /tmp/deploy_key
+          # fi
+
+      - name: Clean up sensitive files
+        if: always()
+        run: |
+          rm -f /tmp/deploy_key

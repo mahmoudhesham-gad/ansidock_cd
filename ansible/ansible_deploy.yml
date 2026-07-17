@@ -1,0 +1,104 @@
+---
+# Self-contained production deployment playbook.
+# All variables, tasks, and handlers from the container_CD role are inlined here.
+# Secrets are read from environment variables set by GitHub Actions.
+
+- hosts: all
+  become: false
+  vars:
+    # Defaults (overridable via environment variables)
+    registry_url: "{{ lookup('env', 'REGISTRY_URL') | default('docker.io', true) }}"
+    image_tag: "{{ lookup('env', 'IMAGE_TAG') | default('latest', true) }}"
+    requires_repository_login: "{{ lookup('env', 'REQUIRES_REPOSITORY_LOGIN') | default('true', true) | bool }}"
+    container_restart_policy: "{{ lookup('env', 'CONTAINER_RESTART_POLICY') | default('unless-stopped', true) }}"
+
+    # Production vars
+    image_name: "{{ lookup('env', 'IMAGE_NAME') }}"
+    container_name: "{{ lookup('env', 'CONTAINER_NAME') }}"
+    container_volumes: "{{ (lookup('env', 'CONTAINER_VOLUMES') | default('', true)).split(',') if lookup('env', 'CONTAINER_VOLUMES') | default('', true) else [] }}"    # Simple scalar/list from comma-separated env var, e.g. "8000:8000,443:443"
+    container_ports: "{{ (lookup('env', 'CONTAINER_PORTS') | default('', true)).split(',') if lookup('env', 'CONTAINER_PORTS') | default('', true) else [] }}"
+
+    # Complex structures passed as JSON strings from GitHub Actions
+    container_env: "{{ lookup('env', 'CONTAINER_ENV_JSON') | default('{}', true) | from_json }}"
+    container_networks: "{{ lookup('env', 'CONTAINER_NETWORKS_JSON') | default('[]', true) | from_json }}"
+    container_network_mode: "{{ lookup('env', 'CONTAINER_NETWORK_MODE') | default('bridge', true) }}"
+
+    registry_username: "{{ lookup('env', 'REGISTRY_USERNAME') }}"
+    registry_password: "{{ lookup('env', 'REGISTRY_PASSWORD') }}"
+
+  tasks:
+    - name: Show which environment variables are set
+      ansible.builtin.debug:
+        msg: "{{ item.name }}: {{ 'SET' if item.value | length > 0 else 'NOT SET' }}"
+      loop:
+        - { name: "REGISTRY_URL", value: "{{ lookup('env', 'REGISTRY_URL') }}" }
+        - { name: "IMAGE_TAG", value: "{{ lookup('env', 'IMAGE_TAG') }}" }
+        - { name: "REQUIRES_REPOSITORY_LOGIN", value: "{{ lookup('env', 'REQUIRES_REPOSITORY_LOGIN') }}" }
+        - { name: "CONTAINER_RESTART_POLICY", value: "{{ lookup('env', 'CONTAINER_RESTART_POLICY') }}" }
+        - { name: "IMAGE_NAME", value: "{{ lookup('env', 'IMAGE_NAME') }}" }
+        - { name: "CONTAINER_NAME", value: "{{ lookup('env', 'CONTAINER_NAME') }}" }
+        - { name: "CONTAINER_VOLUMES", value: "{{ lookup('env', 'CONTAINER_VOLUMES') }}" }
+        - { name: "CONTAINER_PORTS", value: "{{ lookup('env', 'CONTAINER_PORTS') }}" }
+        - { name: "CONTAINER_ENV_JSON", value: "{{ lookup('env', 'CONTAINER_ENV_JSON') }}" }
+        - { name: "CONTAINER_NETWORKS_JSON", value: "{{ lookup('env', 'CONTAINER_NETWORKS_JSON') }}" }
+        - { name: "CONTAINER_NETWORK_MODE", value: "{{ lookup('env', 'CONTAINER_NETWORK_MODE') }}" }
+        - { name: "REGISTRY_USERNAME", value: "{{ lookup('env', 'REGISTRY_USERNAME') }}" }
+        - { name: "REGISTRY_PASSWORD", value: "{{ lookup('env', 'REGISTRY_PASSWORD') }}" }
+      no_log: true
+
+    - name: Ensure Docker service is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Deploy updated container
+      block:
+        - name: Log in to registry
+          community.docker.docker_login:
+            registry_url: "{{ registry_url }}"
+            username: "{{ registry_username }}"
+            password: "{{ registry_password }}"
+            reauthorize: true
+          no_log: true
+          when: requires_repository_login | bool
+
+        - name: Pull latest image
+          community.docker.docker_image:
+            name: "{{ image_name }}"
+            tag: "{{ image_tag }}"
+            source: pull
+            force_source: true
+
+        - name: Remove old container
+          community.docker.docker_container:
+            name: "{{ container_name }}"
+            state: absent
+            force_kill: true
+
+        - name: Start updated container
+          community.docker.docker_container:
+            name: "{{ container_name }}"
+            image: "{{ image_name }}:{{ image_tag }}"
+            pull: never
+            state: started
+            restart_policy: "{{ container_restart_policy }}"
+            ports: "{{ container_ports }}"
+            env: "{{ container_env }}"
+            volumes: "{{ container_volumes }}"
+            networks: "{{ container_networks }}"
+            network_mode: "{{ container_network_mode }}"
+          no_log: true
+      always:
+        - name: Log out of registry
+          community.docker.docker_login:
+            registry_url: "{{ registry_url }}"
+            state: absent
+          no_log: true
+          when: requires_repository_login | bool
+
+    - name: Remove dangling images
+      community.docker.docker_prune:
+        images: true
+        images_filters:
+          dangling: true
