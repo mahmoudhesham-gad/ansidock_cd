@@ -13,7 +13,6 @@ A lightweight, self-contained continuous-delivery setup for deploying containeri
 2. The workflow installs Ansible, the `community.docker` collection, and required secrets/vars.
 3. Ansible connects to the production host over SSH and runs `ansible_deploy.yml`.
 4. The playbook ensures Docker is running, logs into the container registry, pulls the latest image, removes the old container, and starts the updated one.
-5. Optional post-tasks (migrations, collectstatic) can be triggered via `RUN_MIGRATIONS` and `COLLECTSTATIC` variables.
 
 ## Required GitHub secrets
 
@@ -37,13 +36,6 @@ A lightweight, self-contained continuous-delivery setup for deploying containeri
 | `CONTAINER_NETWORKS_JSON` | JSON array of container networks |
 | `CONTAINER_NETWORK_MODE` | Docker network mode, e.g. `bridge` |
 | `IMAGE_TAG` | Image tag to deploy, e.g. `latest` or commit SHA |
-
-## Optional GitHub variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `RUN_MIGRATIONS` | `false` | Set to `true` to run post-deployment migrations |
-| `COLLECTSTATIC` | `false` | Set to `true` to run post-deployment collectstatic |
 
 ## Usage
 
